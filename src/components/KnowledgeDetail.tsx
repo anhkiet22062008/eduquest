@@ -1,10 +1,13 @@
-import { KnowledgeItem } from '../types';
+import { useEffect, useState } from 'react';
+import { KnowledgeItem, Bookmark as BookmarkType } from '../types';
 import { motion } from 'motion/react';
-import { X, Tag, BookOpen, Lightbulb, Share2, Bookmark, MessageSquare, ArrowRight } from 'lucide-react';
+import { X, Tag, BookOpen, Lightbulb, Share2, Bookmark, MessageSquare, ArrowRight, Loader2, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { User } from 'firebase/auth';
+import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, getDocs } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 
 interface KnowledgeDetailProps {
   item: KnowledgeItem;
@@ -14,10 +17,111 @@ interface KnowledgeDetailProps {
 }
 
 export default function KnowledgeDetail({ item, onClose, allKnowledge, user }: KnowledgeDetailProps) {
+  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [bookmarkId, setBookmarkId] = useState<string | null>(null);
+  const [loadingBookmark, setLoadingBookmark] = useState(false);
+  const [isReporting, setIsReporting] = useState(false);
+
   // Find related knowledge based on shared keywords
   const related = allKnowledge
     .filter(k => k.id !== item.id && k.keywords.some(kw => item.keywords.includes(kw)))
     .slice(0, 3);
+
+  useEffect(() => {
+    if (!user) {
+      setIsBookmarked(false);
+      setBookmarkId(null);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'bookmarks'), 
+      where('userId', '==', user.uid), 
+      where('knowledgeId', '==', item.id)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setIsBookmarked(true);
+        setBookmarkId(snapshot.docs[0].id);
+      } else {
+        setIsBookmarked(false);
+        setBookmarkId(null);
+      }
+    });
+
+    return unsubscribe;
+  }, [user, item.id]);
+
+  const handleShare = async () => {
+    const shareData = {
+      title: 'EduQuest 12 - ' + item.title,
+      text: item.summary.substring(0, 100) + '...',
+      url: window.location.href,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(window.location.href);
+        alert('Đã sao chép liên kết vào bộ nhớ tạm!');
+      }
+    } catch (err) {
+      console.error('Error sharing:', err);
+    }
+  };
+
+  const toggleBookmark = async () => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để lưu kiến thức!');
+      return;
+    }
+
+    setLoadingBookmark(true);
+    try {
+      if (isBookmarked && bookmarkId) {
+        await deleteDoc(doc(db, 'bookmarks', bookmarkId));
+      } else {
+        const path = 'bookmarks';
+        await addDoc(collection(db, path), {
+          userId: user.uid,
+          knowledgeId: item.id,
+          createdAt: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      handleFirestoreError(err, isBookmarked ? OperationType.DELETE : OperationType.CREATE, `bookmarks/${bookmarkId || ''}`);
+    } finally {
+      setLoadingBookmark(false);
+    }
+  };
+
+  const handleReport = async () => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để gửi báo cáo!');
+      return;
+    }
+
+    const content = prompt('Nhập nội dung báo cáo hoặc góp ý của bạn:');
+    if (!content || content.trim() === '') return;
+
+    setIsReporting(true);
+    const path = 'feedback';
+    try {
+      await addDoc(collection(db, path), {
+        userId: user.uid,
+        knowledgeId: item.id,
+        content: content.trim(),
+        createdAt: new Date().toISOString()
+      });
+      alert('Cảm ơn bạn! Báo cáo của bạn đã được gửi đến ban quản trị.');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, path);
+    } finally {
+      setIsReporting(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 md:p-8">
@@ -45,11 +149,24 @@ export default function KnowledgeDetail({ item, onClose, allKnowledge, user }: K
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors">
+            <button 
+              onClick={handleShare}
+              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+              title="Chia sẻ"
+            >
               <Share2 className="w-5 h-5" />
             </button>
-            <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors">
-              <Bookmark className="w-5 h-5" />
+            <button 
+              onClick={toggleBookmark}
+              disabled={loadingBookmark}
+              className={`p-2 rounded-full transition-colors ${
+                isBookmarked 
+                  ? 'text-blue-600 bg-blue-50' 
+                  : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+              }`}
+              title={isBookmarked ? 'Bỏ lưu' : 'Lưu kiến thức'}
+            >
+              {loadingBookmark ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bookmark className="w-5 h-5" fill={isBookmarked ? 'currentColor' : 'none'} />}
             </button>
             <button 
               onClick={onClose}
@@ -149,7 +266,12 @@ export default function KnowledgeDetail({ item, onClose, allKnowledge, user }: K
                 <p className="text-blue-700 text-sm mb-4">
                   Bạn thấy kiến thức này có ích không? Hãy gửi báo cáo nếu có sai sót.
                 </p>
-                <button className="w-full py-2 bg-white text-blue-600 rounded-xl text-sm font-bold hover:bg-blue-100 transition-colors border border-blue-200 shadow-sm">
+                <button 
+                  onClick={handleReport}
+                  disabled={isReporting}
+                  className="w-full py-2 bg-white text-blue-600 rounded-xl text-sm font-bold hover:bg-blue-100 transition-colors border border-blue-200 shadow-sm flex items-center justify-center gap-2"
+                >
+                  {isReporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
                   Gửi báo cáo
                 </button>
               </section>

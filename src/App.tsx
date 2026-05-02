@@ -20,6 +20,8 @@ import SubjectFilter from './components/SubjectFilter';
 import KnowledgeCard from './components/KnowledgeCard';
 import KnowledgeDetail from './components/KnowledgeDetail';
 import AdminDashboard from './components/AdminDashboard';
+import Pagination from './components/Pagination';
+import BookmarkList from './components/BookmarkList';
 import { motion, AnimatePresence } from 'motion/react';
 import { BookOpen, Search, Filter, Plus, User as UserIcon, LogIn, LogOut, LayoutDashboard, Bookmark, MessageSquare } from 'lucide-react';
 
@@ -33,6 +35,9 @@ export default function App() {
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeItem | null>(null);
   const [view, setView] = useState<'home' | 'admin' | 'bookmarks'>('home');
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  const homeLimit = 6;
 
   // Auth listener
   useEffect(() => {
@@ -135,12 +140,29 @@ export default function App() {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
+      let message = 'Đã xảy ra lỗi khi đăng nhập.';
+      
+      if (error.code === 'auth/unauthorized-domain') {
+        message = 'Lỗi: Tên miền này chưa được cấp phép trong Firebase Console. \n\nHướng dẫn: \n1. Vào Firebase Console > Authentication > Settings > Authorized Domains. \n2. Thêm tên miền Vercel của bạn vào danh sách.';
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        message = 'Cửa sổ đăng nhập đã bị đóng.';
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        message = 'Yêu cầu đăng nhập đã bị hủy.';
+      } else if (error.code === 'auth/popup-blocked') {
+        message = 'Trình duyệt đã chặn cửa sổ bật lên. Vui lòng cho phép bật lên để đăng nhập.';
+      }
+      
+      alert(message);
     }
   };
 
   const handleLogout = () => signOut(auth);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedSubject, searchQuery]);
 
   const filteredKnowledge = knowledge.filter(item => {
     const matchesSubject = !selectedSubject || item.subject === selectedSubject;
@@ -150,6 +172,11 @@ export default function App() {
       item.keywords.some(k => k.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesSubject && matchesSearch;
   });
+
+  const totalPages = Math.ceil(filteredKnowledge.length / itemsPerPage);
+  const displayKnowledge = selectedSubject || searchQuery 
+    ? filteredKnowledge.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+    : filteredKnowledge.slice(0, homeLimit);
 
   if (loading) {
     return (
@@ -203,16 +230,41 @@ export default function App() {
                     </span>
                   </div>
 
-                  {filteredKnowledge.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                      {filteredKnowledge.map((item) => (
-                        <KnowledgeCard 
-                          key={item.id} 
-                          item={item} 
-                          onClick={() => setSelectedKnowledge(item)} 
+                  {displayKnowledge.length > 0 ? (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {displayKnowledge.map((item) => (
+                          <KnowledgeCard 
+                            key={item.id} 
+                            item={item} 
+                            onClick={() => setSelectedKnowledge(item)} 
+                          />
+                        ))}
+                      </div>
+                      
+                      {(selectedSubject || searchQuery) && (
+                        <Pagination 
+                          currentPage={currentPage}
+                          totalPages={totalPages}
+                          onPageChange={setCurrentPage}
                         />
-                      ))}
-                    </div>
+                      )}
+
+                      {!selectedSubject && !searchQuery && filteredKnowledge.length > homeLimit && (
+                        <div className="mt-12 text-center">
+                          <button 
+                            onClick={() => {
+                              // Focus on Math to trigger pagination view if user wants to see more
+                              const firstSubject = subjects[0]?.name;
+                              if (firstSubject) setSelectedSubject(firstSubject);
+                            }}
+                            className="px-8 py-3 bg-white border border-slate-200 text-blue-600 font-bold rounded-xl hover:bg-slate-50 transition-all shadow-sm"
+                          >
+                            Xem thêm kiến thức
+                          </button>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="text-center py-20 bg-white rounded-3xl border border-slate-200 shadow-sm">
                       <Search className="w-12 h-12 text-slate-300 mx-auto mb-4" />
@@ -256,10 +308,41 @@ export default function App() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
             >
-              <div className="py-12 text-center">
-                <Bookmark className="w-16 h-16 text-blue-500 mx-auto mb-4" />
-                <h2 className="text-3xl font-bold mb-2">Bộ sưu tập của bạn</h2>
-                <p className="text-slate-500">Tính năng đang được phát triển...</p>
+              <div className="py-12">
+                <div className="flex items-center gap-4 mb-10">
+                  <div className="p-3 bg-blue-100 rounded-2xl text-blue-600">
+                    <Bookmark className="w-8 h-8" fill="currentColor" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-bold text-slate-800">Bộ sưu tập của bạn</h2>
+                    <p className="text-slate-500">Các kiến thức bạn đã lưu để ôn tập</p>
+                  </div>
+                </div>
+                
+                {user ? (
+                  (() => {
+                    // This is a bit inefficient for big data but okay for prototypes
+                    // Usually we'd fetch bookmarks first then their products
+                    // But we have all knowledge in memory already
+                    const bookmarkedItems: KnowledgeItem[] = [];
+                    // We need to fetch bookmarks for current user
+                    // Let's add a state for user bookmarks in App.tsx if possible
+                    // Or fetch them here.
+                    return (
+                      <BookmarkList 
+                        user={user} 
+                        knowledge={knowledge} 
+                        onSelect={setSelectedKnowledge} 
+                      />
+                    );
+                  })()
+                ) : (
+                  <div className="text-center py-20 bg-white rounded-3xl border border-slate-200">
+                    <LogIn className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                    <p className="text-slate-500">Vui lòng đăng nhập để xem bộ sưu tập.</p>
+                    <button onClick={handleLogin} className="mt-4 text-blue-600 font-bold">Đăng nhập ngay</button>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

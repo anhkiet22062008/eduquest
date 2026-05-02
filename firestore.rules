@@ -32,9 +32,11 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "anhvinhktu2020@gmail.com" && request.auth.token.email_verified == true));
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        request.auth.token.email == "anhvinhktu2020@gmail.com"
+      );
     }
 
     function isValidUser(data) {
@@ -66,15 +68,15 @@ service cloud.firestore {
 
     // Rules
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
       allow delete: if isAdmin();
     }
 
     match /knowledge/{knowledgeId} {
-      allow read: if true; // Publicly readable
-      allow create, update, delete: if isAdmin() && isValidKnowledge(request.resource.data);
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
     }
 
     match /subjects/{subjectId} {
@@ -84,13 +86,13 @@ service cloud.firestore {
 
     match /bookmarks/{bookmarkId} {
       allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow create: if isAuthenticated() && isValidBookmark(request.resource.data);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
     }
 
     match /feedback/{feedbackId} {
-      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.userId);
-      allow create: if isAuthenticated() && isValidFeedback(request.resource.data);
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow delete: if isAdmin();
     }
   }

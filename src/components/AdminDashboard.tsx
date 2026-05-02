@@ -10,9 +10,9 @@ import {
   orderBy,
   onSnapshot
 } from 'firebase/firestore';
-import { db, storage } from '../firebase';
-import { Subject, KnowledgeItem } from '../types';
-import { Plus, Edit2, Trash2, Save, X, BookOpen, Tag, Image as ImageIcon, Lightbulb, Layers, Upload, Loader2 } from 'lucide-react';
+import { db, storage, handleFirestoreError, OperationType } from '../firebase';
+import { Subject, KnowledgeItem, UserProfile } from '../types';
+import { Plus, Edit2, Trash2, Save, X, BookOpen, Tag, Image as ImageIcon, Lightbulb, Layers, Upload, Loader2, Users as UsersIcon, Shield, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -24,8 +24,9 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ subjects }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'knowledge' | 'subjects'>('knowledge');
+  const [activeTab, setActiveTab] = useState<'knowledge' | 'subjects' | 'users'>('knowledge');
   const [knowledge, setKnowledge] = useState<KnowledgeItem[]>([]);
+  const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [isEditing, setIsEditing] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<KnowledgeItem>>({
     title: '',
@@ -46,6 +47,16 @@ export default function AdminDashboard({ subjects }: AdminDashboardProps) {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'users') {
+      const q = query(collection(db, 'users'), orderBy('email'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setUsersList(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+      });
+      return unsubscribe;
+    }
+  }, [activeTab]);
 
   const handleSave = async () => {
     if (!formData.title || !formData.subject || !formData.summary) {
@@ -68,7 +79,7 @@ export default function AdminDashboard({ subjects }: AdminDashboardProps) {
       
       resetForm();
     } catch (error) {
-      console.error('Error saving knowledge:', error);
+      handleFirestoreError(error, isEditing ? OperationType.UPDATE : OperationType.CREATE, `knowledge/${isEditing || ''}`);
     }
   };
 
@@ -77,7 +88,7 @@ export default function AdminDashboard({ subjects }: AdminDashboardProps) {
       try {
         await deleteDoc(doc(db, 'knowledge', id));
       } catch (error) {
-        console.error('Error deleting knowledge:', error);
+        handleFirestoreError(error, OperationType.DELETE, `knowledge/${id}`);
       }
     }
   };
@@ -163,6 +174,23 @@ export default function AdminDashboard({ subjects }: AdminDashboardProps) {
     );
   };
 
+  const toggleUserRole = async (user: UserProfile) => {
+    if (user.email === 'anhvinhktu2020@gmail.com') {
+      alert('Không thể thay đổi quyền của Admin mặc định!');
+      return;
+    }
+
+    const newRole = user.role === 'admin' ? 'student' : 'admin';
+    if (confirm(`Thay đổi quyền truy cập của ${user.email} thành ${newRole}?`)) {
+      const path = `users/${user.uid}`;
+      try {
+        await updateDoc(doc(db, 'users', user.uid), { role: newRole });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, path);
+      }
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -183,6 +211,14 @@ export default function AdminDashboard({ subjects }: AdminDashboardProps) {
             }`}
           >
             Môn học
+          </button>
+          <button 
+            onClick={() => setActiveTab('users')}
+            className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'users' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Thành viên
           </button>
         </div>
       </div>
@@ -431,6 +467,69 @@ export default function AdminDashboard({ subjects }: AdminDashboardProps) {
           <Layers className="w-16 h-16 text-slate-300 mx-auto mb-4" />
           <h3 className="text-xl font-bold text-slate-800 mb-2">Quản lý môn học</h3>
           <p className="text-slate-500">Tính năng đang được phát triển...</p>
+        </div>
+      )}
+
+      {activeTab === 'users' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <UsersIcon className="w-5 h-5 text-blue-600" />
+              Quản lý thành viên ({usersList.length})
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-[10px] uppercase font-bold tracking-wider">
+                  <th className="px-6 py-4">Thành viên</th>
+                  <th className="px-6 py-4">Email</th>
+                  <th className="px-6 py-4">Quyền hạn</th>
+                  <th className="px-6 py-4 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {usersList.map((u) => (
+                  <tr key={u.uid} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                          {u.displayName.charAt(0)}
+                        </div>
+                        <span className="font-bold text-slate-800">{u.displayName}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-slate-600 text-sm">{u.email}</td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                        u.role === 'admin' 
+                          ? 'bg-amber-100 text-amber-700' 
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {u.role === 'admin' ? <ShieldCheck className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
+                        {u.role === 'admin' ? 'Quản trị viên' : 'Học sinh'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        onClick={() => toggleUserRole(u)}
+                        disabled={u.email === 'anhvinhktu2020@gmail.com'}
+                        className={`text-xs font-bold px-4 py-2 rounded-xl transition-all ${
+                          u.email === 'anhvinhktu2020@gmail.com'
+                          ? 'opacity-0 cursor-default'
+                          : u.role === 'admin'
+                            ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            : 'bg-amber-500 text-white hover:bg-amber-600 shadow-md shadow-amber-200'
+                        }`}
+                      >
+                        {u.role === 'admin' ? 'Hạ quyền' : 'Cấp quyền Admin'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
